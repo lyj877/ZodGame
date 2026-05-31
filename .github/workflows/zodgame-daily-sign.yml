@@ -26,4 +26,6 @@ jobs:
       - name: 執行簽到腳本
         env:
           ZODGAME_COOKIE: ${{ secrets.ZODGAME_COOKIE }}
+          PUSH_PLUS_TOKEN: ${{ secrets.PUSH_PLUS_TOKEN }}
+        run: python sign.py
         run: python sign.py 
