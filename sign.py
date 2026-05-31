@@ -4,6 +4,8 @@ import re
 import time
 import logging
 from urllib.parse import urljoin
+import json
+import urllib.request
 
 # 設定日誌
 logging.basicConfig(
@@ -30,6 +32,31 @@ ESSENTIAL_COOKIES = [
     'qhMq_2132_lastvisit',
     'qhMq_2132_ulastactivity'
 ]
+
+def send_pushplus(title, content):
+    """發送 PushPlus 通知"""
+    token = os.environ.get("PUSH_PLUS_TOKEN")
+    if not token:
+        logger.info("未配置 PUSH_PLUS_TOKEN，跳過消息推送。")
+        return
+
+    url = "http://www.pushplus.plus/send"
+    data = json.dumps({
+        "token": token,
+        "title": title,
+        "content": content
+    }).encode('utf-8')
+
+    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            if result.get('code') == 200:
+                logger.info("PushPlus 推送成功！")
+            else:
+                logger.error(f"PushPlus 推送失敗：{result}")
+    except Exception as e:
+        logger.error(f"PushPlus 推送發生異常：{e}")
 
 def parse_cookies(cookie_str):
     """解析 cookie 字串並只保留必要的 cookie"""
@@ -84,16 +111,19 @@ def sign_with_retry(cookies, max_retries=MAX_RETRIES, retry_delay=RETRY_DELAY):
 
                 status = check_sign_status(response.text)
                 if status == 'already_signed':
-                    logger.info("今天已經簽到過了")
-                    return True
+                    msg = "今天已經簽到過了"
+                    logger.info(msg)
+                    return True, msg
                 elif status == 'not_logged_in':
-                    logger.error("Cookie 已過期或無效，請更新 ZODGAME_COOKIE")
-                    return False
+                    msg = "Cookie 已過期或無效，請更新 ZODGAME_COOKIE"
+                    logger.error(msg)
+                    return False, msg
 
                 formhash = extract_formhash(response.text)
                 if not formhash:
-                    logger.error("無法獲取 formhash，可能未正確登入")
-                    return False
+                    msg = "無法獲取 formhash，可能未正確登入"
+                    logger.error(msg)
+                    return False, msg
 
                 sign_data = {
                     'formhash': formhash,
@@ -110,13 +140,15 @@ def sign_with_retry(cookies, max_retries=MAX_RETRIES, retry_delay=RETRY_DELAY):
                 if "恭喜你签到成功" in sign_response.text or "簽到成功" in sign_response.text:
                     reward = extract_reward(sign_response.text)
                     if reward:
-                        logger.info(f"簽到成功！獲得酱油 {reward} 瓶")
+                        msg = f"簽到成功！獲得酱油 {reward} 瓶"
                     else:
-                        logger.info("簽到成功！")
-                    return True
+                        msg = "簽到成功！"
+                    logger.info(msg)
+                    return True, msg
                 elif "已經簽到" in sign_response.text or "已经签到" in sign_response.text:
-                    logger.info("今天已經簽到過了")
-                    return True
+                    msg = "今天已經簽到過了"
+                    logger.info(msg)
+                    return True, msg
                 else:
                     logger.warning(f"簽到回應不符合預期：{sign_response.text[:200]}...")
 
@@ -127,27 +159,35 @@ def sign_with_retry(cookies, max_retries=MAX_RETRIES, retry_delay=RETRY_DELAY):
                 logger.info(f"等待 {retry_delay} 秒後重試...")
                 time.sleep(retry_delay)
 
-    logger.error(f"已重試 {MAX_ROUNDS} 輪，簽到失敗")
-    return False
+    msg = f"已重試 {MAX_ROUNDS} 輪，簽到失敗"
+    logger.error(msg)
+    return False, msg
 
 def main():
     try:
         cookie_str = os.environ.get('ZODGAME_COOKIE')
         if not cookie_str:
-            logger.error("請設定 ZODGAME_COOKIE 環境變數")
+            msg = "請設定 ZODGAME_COOKIE 環境變數"
+            logger.error(msg)
+            send_pushplus("ZodGame 簽到失敗", msg)
             exit(1)
 
         cookies = parse_cookies(cookie_str)
         logger.info(f"已載入 {len(cookies)} 個 cookie")
 
-        if sign_with_retry(cookies):
+        success, msg = sign_with_retry(cookies)
+        if success:
             logger.info("簽到操作完成")
+            send_pushplus("ZodGame 簽到成功", msg)
             exit(0)
         else:
             logger.error("簽到失敗！")
+            send_pushplus("ZodGame 簽到失敗", msg)
             exit(1)
     except Exception as e:
-        logger.exception(f"發生未預期的錯誤：{str(e)}")
+        msg = f"發生未預期的錯誤：{str(e)}"
+        logger.exception(msg)
+        send_pushplus("ZodGame 簽到異常", msg)
         exit(1)
 
 if __name__ == "__main__":
